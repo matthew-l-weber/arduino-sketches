@@ -286,10 +286,9 @@ const int numReadings = 5;
 int readings[numReadings];      // the readings from the analog input
 int readIndex = 0;              // the index of the current reading
 int total = 0;                  // the running total
-int average = 0;                // the average
+int averageLight = 0;                // the average
 
 int inputPin = A0;
-unsigned int lightStateLast = 0;
 
 void initLightSensor() {
   for (int thisReading = 0; thisReading < numReadings; thisReading++) {
@@ -315,10 +314,10 @@ void updateLightSensor() {
   }
 
   // calculate the average:
-  average = total / numReadings;
+  averageLight = total / numReadings;
   // send it to the computer as ASCII digits
-  if(DEBUG)
-    Serial.println(average);
+//  if(DEBUG)
+//    Serial.println(average);
 }
 
 
@@ -348,11 +347,21 @@ void initVibrationSensor() {
 #define SAMPLES 64
 #define EXPANDED_SAMPLES 64000000
 double vReal[SAMPLES];
+unsigned int currentTemp;
+unsigned long sample_rate_calc = 0;
 
 #ifdef ARDUINOLIB_FFT
 #include "arduinoFFT.h"
 arduinoFFT FFT = arduinoFFT();
 double vImag[SAMPLES];
+double peak = 0;
+
+const int numPeakReadings = 10;
+
+int readingsPeak[numPeakReadings];      // the readings from the analog input
+int readPeakIndex = 0;              // the index of the current reading
+int totalPeak = 0;                  // the running total
+int averagePeak = 0;                // the average
 #endif
 
 void updateVibrationSensor() {
@@ -371,34 +380,43 @@ void updateVibrationSensor() {
 
   // Getting the duration
   t = micros() - t;
-  t = EXPANDED_SAMPLES / t;
+  sample_rate_calc = EXPANDED_SAMPLES / t;
 
 #ifdef ARDUINOLIB_FFT
   /*FFT*/
   FFT.Windowing(vReal, SAMPLES, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
   FFT.Compute(vReal, vImag, SAMPLES, FFT_FORWARD);
   FFT.ComplexToMagnitude(vReal, vImag, SAMPLES);
-  double peak = FFT.MajorPeak(vReal, SAMPLES, t);
+  peak = FFT.MajorPeak(vReal, SAMPLES, sample_rate_calc);
 
-  for(int i=0; i<(SAMPLES/2); i++)
-  {
-      /*View all these three lines in serial terminal to see which frequencies has which amplitudes*/
-       
-      //Serial.print((i * 1.0 * SAMPLING_FREQUENCY) / SAMPLES, 1);
-      //Serial.print(" ");
-      Serial.print(vReal[i], 1);    //View only this line in serial plotter to visualize the bins
-      Serial.print(F(","));
+  totalPeak = totalPeak - readingsPeak[readPeakIndex];
+  readingsPeak[readPeakIndex] = (int)peak; //double cast issue?????????
+  totalPeak = totalPeak + readingsPeak[readPeakIndex];
+  readPeakIndex = readPeakIndex + 1;
+  if (readPeakIndex >= numPeakReadings) {
+    readPeakIndex = 0;
   }
+  averagePeak = totalPeak / numPeakReadings;
+
+//  for(int i=0; i<(SAMPLES/2); i++)
+//  {
+//      /*View all these three lines in serial terminal to see which frequencies has which amplitudes*/
+//       
+//      //Serial.print((i * 1.0 * SAMPLING_FREQUENCY) / SAMPLES, 1);
+//      //Serial.print(" ");
+//      Serial.print(vReal[i], 1);    //View only this line in serial plotter to visualize the bins
+//      Serial.print(F(","));
+//  }
  
-  Serial.print(F("SampleFreq: "));
-  Serial.print(t);
-  Serial.print(F(" Peak: "));
-  Serial.println(peak);  
+//  Serial.print(F("SampleFreq: "));
+//  Serial.print(t);
+//  Serial.print(F(" Peak: "));
+//  Serial.println(peak);  
 #endif
 
 
 #ifdef INLINE_FFT  
-  FFT(vReal, SAMPLES, t);
+  FFT(vReal, SAMPLES, sample_rate_calc);
 
   if(DEBUG) {
     Serial.print(f_peaks[0]);
@@ -413,7 +431,8 @@ void updateVibrationSensor() {
   }   
 #endif
 
-  Serial.print(F("Temp: "));Serial.println(mpu.getTemp());
+  currentTemp = mpu.getTemp();
+//  Serial.print(F("Temp: "));Serial.println(mpu.getTemp());
 //    Serial.print(F("ACCELERO  X: "));Serial.print(mpu.getAccX());
 //    Serial.print("\tY: ");Serial.print(mpu.getAccY());
 //    Serial.print("\tZ: ");Serial.println(mpu.getAccZ());
@@ -441,31 +460,31 @@ void setup() {
   Serial.begin(115200);
 
   initLightSensor();
-  
   initVibrationSensor();
-
   initEthernet();
 }
 
-#define LIGHT_SENSOR_PERIOD 2000000
-#define ETHERNET_PERIOD 5000000
-unsigned long ticks, runLightTicks=0, runEthTicks=0;
+#define SENSING_PERIODIC 20000000
 void loop() {
-  ticks = micros();
+  unsigned long ticks = micros();
+  unsigned long runLoop = ticks;
 
-  // continuous aquire vibration data
-  // TBD need to measure what this is
-  // FFT compute on 64samples to start
-  updateVibrationSensor();
-
-
-  if(ticks - runLightTicks > LIGHT_SENSOR_PERIOD) {
+  while(ticks - runLoop < SENSING_PERIODIC) {
+    updateVibrationSensor();
     updateLightSensor();  
-    runLightTicks = ticks;
+    ticks = micros();
   }
+  Serial.print(currentTemp);
+  Serial.print(",");
+  Serial.print(averageLight);
+  Serial.print(",");
+  Serial.print(peak);
+  Serial.print(",");
+  Serial.print(averagePeak);
+  Serial.print(",");
+  Serial.println(sample_rate_calc);
 
-  if(ticks - runEthTicks > ETHERNET_PERIOD) {
-    updateEthernet();
-    runEthTicks = ticks;
-  }
+  updateEthernet();
+
+  delay(20000);
 }
